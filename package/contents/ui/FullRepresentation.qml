@@ -31,6 +31,8 @@ Item {
     property bool powerModeOpen: false
     property bool keyboardOpen: false
     property int pendingKbdBrightness: -1
+    property var lastSetTs: ({})     // display-id -> Zeitpunkt der letzten lokalen Änderung
+    property double kbdLastSetTs: 0
 
     readonly property var cfg: Plasmoid.configuration
     readonly property bool darkOn: colorScheme === cfg.darkScheme
@@ -80,13 +82,16 @@ Item {
         executable.connectSource(cmd)
     }
 
+    // Der Zeitstempel markiert, wann die Abfrage losgeschickt wurde. Antworten,
+    // die älter sind als die letzte lokale Regler-Änderung, werden beim Parsen
+    // verworfen, damit sie den frischen Wert nicht überschreiben.
     function refresh() {
-        exec(refreshCmd)
+        exec("echo \"KPWR;TS|" + Date.now() + "\";" + refreshCmd)
     }
 
     // Aktion ausführen, kurz warten, dann Zustand neu einlesen
     function toggleAndRefresh(cmd) {
-        exec(cmd + " >/dev/null 2>&1; sleep 0.4; " + refreshCmd)
+        exec("echo \"KPWR;TS|" + Date.now() + "\";" + cmd + " >/dev/null 2>&1; sleep 0.4; " + refreshCmd)
     }
 
     function launch(cmd) {
@@ -104,6 +109,7 @@ Item {
         const lines = out.split("\n")
         const dispIds = []
         const dispInfo = {}
+        let requestTs = 0
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i]
             if (line.indexOf("KPWR;") !== 0) {
@@ -111,6 +117,9 @@ Item {
             }
             const parts = line.substring(5).split("|")
             switch (parts[0]) {
+            case "TS":
+                requestTs = parts[1] ? parseFloat(parts[1]) : 0
+                break
             case "BAT":
                 batteryPercent = parts[1] ? Math.round(parseFloat(parts[1])) : -1
                 batteryState = parts[2] ? parseInt(parts[2]) : 0
@@ -143,7 +152,9 @@ Item {
                 colorScheme = parts[1] || ""
                 break
             case "KBD":
-                kbdBrightness = parts[1] ? parseInt(parts[1]) : -1
+                if (requestTs >= kbdLastSetTs) {
+                    kbdBrightness = parts[1] ? parseInt(parts[1]) : -1
+                }
                 kbdMax = parts[2] ? parseInt(parts[2]) : -1
                 break
             case "PLANE":
@@ -159,6 +170,15 @@ Item {
             if (JSON.stringify(dispIds) !== JSON.stringify(displayIds)) {
                 displayIds = dispIds
             }
+            // Veraltete Antwort (vor der letzten lokalen Änderung gestartet):
+            // den optimistisch gesetzten Wert behalten
+            for (let d = 0; d < dispIds.length; d++) {
+                const id = dispIds[d]
+                if (lastSetTs[id] !== undefined && requestTs < lastSetTs[id]
+                        && displayInfo[id] !== undefined) {
+                    dispInfo[id].brightness = displayInfo[id].brightness
+                }
+            }
             displayInfo = dispInfo
         }
     }
@@ -167,6 +187,7 @@ Item {
     // damit der Regler beim Loslassen nicht auf den alten Wert zurückspringt
     function setDisplayBrightness(id, value) {
         exec(qBrightRoot + "/" + id + " org.kde.ScreenBrightness.Display.SetBrightness " + value + " 1")
+        lastSetTs[id] = Date.now()
         if (displayInfo[id]) {
             displayInfo[id].brightness = value
             displayInfo = Object.assign({}, displayInfo)
@@ -175,6 +196,7 @@ Item {
 
     function setKbdBrightness(value) {
         exec(qKbd + "setKeyboardBrightnessSilent " + value)
+        kbdLastSetTs = Date.now()
         kbdBrightness = value
     }
 
