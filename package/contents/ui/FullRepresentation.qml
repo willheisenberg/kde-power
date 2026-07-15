@@ -174,8 +174,8 @@ Item {
             // den optimistisch gesetzten Wert behalten
             for (let d = 0; d < dispIds.length; d++) {
                 const id = dispIds[d]
-                if (lastSetTs[id] !== undefined && requestTs < lastSetTs[id]
-                        && displayInfo[id] !== undefined) {
+                const stale = lastSetTs[id] !== undefined && requestTs < lastSetTs[id]
+                if (stale && displayInfo[id] !== undefined) {
                     dispInfo[id].brightness = displayInfo[id].brightness
                 }
             }
@@ -457,6 +457,8 @@ Item {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing * 2
 
+                onInfoChanged: dispSlider.sync()
+
                 Kirigami.Icon {
                     Layout.alignment: Qt.AlignVCenter
                     implicitWidth: Kirigami.Units.iconSizes.smallMedium
@@ -488,6 +490,21 @@ Item {
                         to: brightnessRow.info && brightnessRow.info.max > 0
                             ? brightnessRow.info.max : 100
                         stepSize: 1
+
+                        // Kein "Binding on value": das Binding-Element friert beim
+                        // Deaktivieren (während des Ziehens) seinen Auswertungsstand
+                        // ein und schreibt beim Loslassen den alten Wert zurück.
+                        // Stattdessen wird der Wert explizit synchronisiert.
+                        function sync() {
+                            if (!pressed && brightnessRow.info
+                                    && brightnessRow.info.brightness >= 0) {
+                                value = Math.min(brightnessRow.info.brightness,
+                                                 brightnessRow.info.max)
+                            }
+                        }
+
+                        Component.onCompleted: sync()
+                        onToChanged: sync()
                         onMoved: {
                             brightnessRow.pending = Math.round(value)
                             dispTimer.restart()
@@ -499,17 +516,7 @@ Item {
                                 fullRoot.setDisplayBrightness(brightnessRow.modelData,
                                                               brightnessRow.pending)
                             }
-                        }
-
-                        Binding on value {
-                            // Hängt bewusst auch vom Maximum ab, damit die Binding
-                            // neu auswertet, sobald "to" seinen echten Wert bekommt
-                            value: brightnessRow.info
-                                   ? Math.min(brightnessRow.info.brightness, brightnessRow.info.max)
-                                   : 0
-                            when: !dispSlider.pressed
-                                  && brightnessRow.info !== undefined
-                                  && brightnessRow.info.brightness >= 0
+                            sync()
                         }
                     }
                 }
@@ -675,6 +682,15 @@ Item {
                 to: fullRoot.kbdMax > 0 ? fullRoot.kbdMax : 1
                 stepSize: 1
                 snapMode: PC3.Slider.SnapAlways
+
+                function sync() {
+                    if (!pressed && fullRoot.kbdBrightness >= 0 && fullRoot.kbdMax > 0) {
+                        value = Math.min(fullRoot.kbdBrightness, fullRoot.kbdMax)
+                    }
+                }
+
+                Component.onCompleted: sync()
+                onToChanged: sync()
                 onMoved: {
                     fullRoot.pendingKbdBrightness = Math.round(value)
                     kbdTimer.restart()
@@ -684,11 +700,12 @@ Item {
                         kbdTimer.stop()
                         fullRoot.setKbdBrightness(fullRoot.pendingKbdBrightness)
                     }
+                    sync()
                 }
 
-                Binding on value {
-                    value: Math.min(fullRoot.kbdBrightness, fullRoot.kbdMax)
-                    when: !kbdSlider.pressed && fullRoot.kbdBrightness >= 0
+                Connections {
+                    target: fullRoot
+                    function onKbdBrightnessChanged() { kbdSlider.sync() }
                 }
             }
         }
