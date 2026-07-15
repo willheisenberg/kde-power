@@ -27,6 +27,9 @@ Item {
     property int kbdBrightness: -1
     property int kbdMax: -1
     property bool airplaneOn: false
+    property bool dndOn: false
+    property bool micMuted: false
+    property bool recOn: false
 
     // ---- Ausklapp-Panels (Geräte-/Netzwerklisten) ----
     property var btDevices: []       // { path, mac, connected, icon, name }
@@ -46,7 +49,8 @@ Item {
     readonly property var cfg: Plasmoid.configuration
     readonly property bool darkOn: colorScheme === cfg.darkScheme
                                    || colorScheme.toLowerCase().indexOf("dark") !== -1
-    readonly property bool anyPowerAction: cfg.showSuspend || cfg.showRestart
+    readonly property bool anyPowerAction: cfg.showSuspend || cfg.showHibernate
+                                           || cfg.showHybridSuspend || cfg.showRestart
                                            || cfg.showShutdown || cfg.showLogout
                                            || cfg.showSwitchUser
 
@@ -76,6 +80,8 @@ Item {
         "echo \"KPWR;SCHEME|$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null)\";" +
         "echo \"KPWR;KBD|$(" + qKbd + "keyboardBrightness 2>/dev/null)|$(" + qKbd + "keyboardBrightnessMax 2>/dev/null)\";" +
         "echo \"KPWR;PLANE|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked: yes')|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked:')\";" +
+        "echo \"KPWR;DND|$(kreadconfig6 --file plasmanotifyrc --group DoNotDisturb --key Until 2>/dev/null)\";" +
+        "echo \"KPWR;MIC|$(LC_ALL=C wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | grep -c MUTED)\";" +
         btListCmd
 
     P5Support.DataSource {
@@ -262,6 +268,22 @@ Item {
                     kbdBrightness = parts[1] ? parseInt(parts[1]) : -1
                 }
                 kbdMax = parts[2] ? parseInt(parts[2]) : -1
+                break
+            case "DND": {
+                // KConfig-Datum "jjjj,M,t,h,m,s.ms" — aktiv, wenn in der Zukunft
+                const dndParts = parts.slice(1).join("|").split(",")
+                if (dndParts.length >= 6) {
+                    const until = new Date(parseInt(dndParts[0]), parseInt(dndParts[1]) - 1,
+                                           parseInt(dndParts[2]), parseInt(dndParts[3]),
+                                           parseInt(dndParts[4]), Math.floor(parseFloat(dndParts[5])))
+                    dndOn = until.getTime() > Date.now()
+                } else {
+                    dndOn = false
+                }
+                break
+            }
+            case "MIC":
+                micMuted = parts[1] ? parseInt(parts[1]) > 0 : false
                 break
             case "PLANE":
                 const blocked = parts[1] ? parseInt(parts[1]) : 0
@@ -550,6 +572,24 @@ Item {
                 }
 
                 PowerMenuItem {
+                    visible: fullRoot.cfg.showHibernate
+                    text: "Ruhezustand"
+                    onClicked: {
+                        fullRoot.closePopup()
+                        fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendToDisk")
+                    }
+                }
+
+                PowerMenuItem {
+                    visible: fullRoot.cfg.showHybridSuspend
+                    text: "Hybrider Standby"
+                    onClicked: {
+                        fullRoot.closePopup()
+                        fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendHybrid")
+                    }
+                }
+
+                PowerMenuItem {
                     visible: fullRoot.cfg.showRestart
                     text: "Neustart…"
                     onClicked: {
@@ -568,7 +608,9 @@ Item {
                 }
 
                 Rectangle {
-                    visible: (fullRoot.cfg.showSuspend || fullRoot.cfg.showRestart || fullRoot.cfg.showShutdown)
+                    visible: (fullRoot.cfg.showSuspend || fullRoot.cfg.showHibernate
+                              || fullRoot.cfg.showHybridSuspend || fullRoot.cfg.showRestart
+                              || fullRoot.cfg.showShutdown)
                              && (fullRoot.cfg.showLogout || fullRoot.cfg.showSwitchUser)
                     Layout.fillWidth: true
                     Layout.topMargin: Kirigami.Units.smallSpacing
@@ -1062,6 +1104,45 @@ Item {
                 active: fullRoot.airplaneOn
                 onClicked: fullRoot.toggleAndRefresh(
                     fullRoot.airplaneOn ? "rfkill unblock all" : "rfkill block all")
+            }
+
+            QuickToggle {
+                visible: fullRoot.cfg.showDnd
+                icon: fullRoot.dndOn ? "notifications-disabled-symbolic" : "notifications-symbolic"
+                title: "Nicht stören"
+                subtitle: fullRoot.dndOn ? "An" : "Aus"
+                active: fullRoot.dndOn
+                onClicked: fullRoot.toggleAndRefresh(
+                    "qdbus6 org.kde.kglobalaccel /component/plasmashell"
+                    + " org.kde.kglobalaccel.Component.invokeShortcut \"toggle do not disturb\"")
+            }
+
+            QuickToggle {
+                visible: fullRoot.cfg.showMic
+                icon: fullRoot.micMuted ? "microphone-sensitivity-muted-symbolic"
+                                        : "audio-input-microphone-symbolic"
+                title: "Mikrofon"
+                subtitle: fullRoot.micMuted ? "Stumm" : "An"
+                active: fullRoot.micMuted
+                onClicked: fullRoot.toggleAndRefresh("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle")
+            }
+
+            QuickToggle {
+                visible: fullRoot.cfg.showRecording
+                icon: "media-record-symbolic"
+                title: "Aufnahme"
+                subtitle: fullRoot.recOn ? "Läuft – zum Stoppen tippen" : "Bildschirm"
+                active: fullRoot.recOn
+                // Spectacles Bildschirmaufnahme-Shortcut ist ein Start/Stopp-
+                // Umschalter — derselbe Aufruf startet und beendet die Aufnahme.
+                // Der Zustand wird lokal gehalten (KDE bietet dafür kein sauber
+                // abfragbares Signal); der Umschalter selbst ist zuverlässig.
+                onClicked: {
+                    fullRoot.recOn = !fullRoot.recOn
+                    fullRoot.exec(
+                        "qdbus6 org.kde.kglobalaccel /component/org_kde_spectacle_desktop"
+                        + " org.kde.kglobalaccel.Component.invokeShortcut RecordScreen")
+                }
             }
         }
 

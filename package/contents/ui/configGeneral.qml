@@ -14,6 +14,8 @@ KCM.SimpleKCM {
 
     // Power-Menü
     property alias cfg_showSuspend: showSuspend.checked
+    property alias cfg_showHibernate: showHibernate.checked
+    property alias cfg_showHybridSuspend: showHybridSuspend.checked
     property alias cfg_showRestart: showRestart.checked
     property alias cfg_showShutdown: showShutdown.checked
     property alias cfg_showLogout: showLogout.checked
@@ -30,6 +32,9 @@ KCM.SimpleKCM {
     property alias cfg_showDarkStyle: showDarkStyle.checked
     property alias cfg_showKeyboard: showKeyboard.checked
     property alias cfg_showAirplane: showAirplane.checked
+    property alias cfg_showDnd: showDnd.checked
+    property alias cfg_showMic: showMic.checked
+    property alias cfg_showRecording: showRecording.checked
 
     // Farbschemata
     property alias cfg_lightScheme: lightScheme.text
@@ -51,6 +56,8 @@ KCM.SimpleKCM {
             Kirigami.FormData.isSection: true
         }
         QQC2.CheckBox { id: showSuspend; text: "Bereitschaft" }
+        QQC2.CheckBox { id: showHibernate; text: "Ruhezustand" }
+        QQC2.CheckBox { id: showHybridSuspend; text: "Hybrider Standby" }
         QQC2.CheckBox { id: showRestart; text: "Neustart" }
         QQC2.CheckBox { id: showShutdown; text: "Ausschalten" }
         QQC2.CheckBox { id: showLogout; text: "Abmelden" }
@@ -82,6 +89,9 @@ KCM.SimpleKCM {
         QQC2.CheckBox { id: showDarkStyle; text: "Dunkles Design" }
         QQC2.CheckBox { id: showKeyboard; text: "Tastaturbeleuchtung" }
         QQC2.CheckBox { id: showAirplane; text: "Flugmodus" }
+        QQC2.CheckBox { id: showDnd; text: "Bitte nicht stören" }
+        QQC2.CheckBox { id: showMic; text: "Mikrofon stumm" }
+        QQC2.CheckBox { id: showRecording; text: "Bildschirmaufnahme" }
 
         Item {
             Kirigami.FormData.label: "Farbschemata für „Dunkles Design“"

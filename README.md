@@ -10,8 +10,9 @@ Akku-Anzeige, Helligkeitsregler und Schnelleinstellungs-Kacheln.
 **Kopfzeile:** Akku-Anzeige (UPower) · Bildschirmfoto (Spectacle) ·
 Systemeinstellungen · Bildschirm sperren · Power-Knopf
 
-**Power-Menü:** Bereitschaft · Neustart… · Ausschalten… · Abmelden… ·
-Benutzer wechseln… (die „…“-Einträge zeigen den Plasma-Bestätigungsdialog)
+**Power-Menü:** Bereitschaft · Ruhezustand · Hybrider Standby (optional) ·
+Neustart… · Ausschalten… · Abmelden… · Benutzer wechseln… (die
+„…“-Einträge zeigen den Plasma-Bestätigungsdialog)
 
 **Regler:** Bildschirmhelligkeit – ein Regler pro erkanntem Bildschirm
 (org.kde.ScreenBrightness), bei mehreren Monitoren mit Namensbeschriftung
@@ -19,7 +20,8 @@ Benutzer wechseln… (die „…“-Einträge zeigen den Plasma-Bestätigungsdia
 **Kacheln:** WLAN (nmcli) · Bluetooth (BlueZ-DBus, alle Adapter) ·
 Energiemodus (power-profiles-daemon) · Nachtlicht (KWin) · Dunkles Design
 (plasma-apply-colorscheme) · Tastaturbeleuchtung (PowerDevil) · Flugmodus
-(rfkill)
+(rfkill) · Bitte nicht stören (Plasma) · Mikrofon stumm (PipeWire/wpctl) ·
+Bildschirmaufnahme (Spectacle-Umschalter)
 
 **Ausklapp-Panels (Pfeil auf der Kachel, animiert, direkt unter der
 Kachelzeile):**
