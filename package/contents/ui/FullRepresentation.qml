@@ -163,6 +163,21 @@ Item {
         }
     }
 
+    // Setzt die Helligkeit und aktualisiert den lokalen Zustand sofort,
+    // damit der Regler beim Loslassen nicht auf den alten Wert zurückspringt
+    function setDisplayBrightness(id, value) {
+        exec(qBrightRoot + "/" + id + " org.kde.ScreenBrightness.Display.SetBrightness " + value + " 1")
+        if (displayInfo[id]) {
+            displayInfo[id].brightness = value
+            displayInfo = Object.assign({}, displayInfo)
+        }
+    }
+
+    function setKbdBrightness(value) {
+        exec(qKbd + "setKeyboardBrightnessSilent " + value)
+        kbdBrightness = value
+    }
+
     function profileLabel(p) {
         switch (p) {
         case "power-saver": return "Energiesparen"
@@ -220,7 +235,7 @@ Item {
         interval: 150
         onTriggered: {
             if (fullRoot.pendingKbdBrightness >= 0) {
-                fullRoot.exec(fullRoot.qKbd + "setKeyboardBrightnessSilent " + fullRoot.pendingKbdBrightness)
+                fullRoot.setKbdBrightness(fullRoot.pendingKbdBrightness)
             }
         }
     }
@@ -455,6 +470,14 @@ Item {
                             brightnessRow.pending = Math.round(value)
                             dispTimer.restart()
                         }
+                        onPressedChanged: {
+                            // Beim Loslassen den Endwert sofort übernehmen
+                            if (!pressed && brightnessRow.pending >= 0) {
+                                dispTimer.stop()
+                                fullRoot.setDisplayBrightness(brightnessRow.modelData,
+                                                              brightnessRow.pending)
+                            }
+                        }
 
                         Binding on value {
                             // Hängt bewusst auch vom Maximum ab, damit die Binding
@@ -474,9 +497,8 @@ Item {
                     interval: 150
                     onTriggered: {
                         if (brightnessRow.pending >= 0) {
-                            fullRoot.exec(fullRoot.qBrightRoot + "/" + brightnessRow.modelData
-                                          + " org.kde.ScreenBrightness.Display.SetBrightness "
-                                          + brightnessRow.pending + " 1")
+                            fullRoot.setDisplayBrightness(brightnessRow.modelData,
+                                                          brightnessRow.pending)
                         }
                     }
                 }
@@ -634,6 +656,12 @@ Item {
                 onMoved: {
                     fullRoot.pendingKbdBrightness = Math.round(value)
                     kbdTimer.restart()
+                }
+                onPressedChanged: {
+                    if (!pressed && fullRoot.pendingKbdBrightness >= 0) {
+                        kbdTimer.stop()
+                        fullRoot.setKbdBrightness(fullRoot.pendingKbdBrightness)
+                    }
                 }
 
                 Binding on value {
