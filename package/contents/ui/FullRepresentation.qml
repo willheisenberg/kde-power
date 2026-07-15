@@ -888,7 +888,8 @@ Item {
                         icon: modelData.icon
                         fallbackIcon: "network-bluetooth"
                         text: modelData.name
-                        trailing: modelData.connected ? "Trennen" : "Verbinden"
+                        showSwitch: true
+                        switchOn: modelData.connected
                         bold: modelData.connected
                         onClicked: {
                             // Über den DBus-Pfad, damit auch Geräte an einem
