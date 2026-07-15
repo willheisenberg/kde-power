@@ -14,8 +14,8 @@ Item {
     property int batteryPercent: -1
     property int batteryState: 0            // UPower: 1=lädt, 2=entlädt, 4=voll
     property string batteryIcon: "battery-full-symbolic"
-    property int brightness: -1
-    property int brightnessMax: -1
+    property var displayIds: []      // z. B. ["display0", "display1"]
+    property var displayInfo: ({})   // id -> { brightness, max, label }
     property bool wifiOn: false
     property string wifiSsid: ""
     property bool btOn: false
@@ -30,7 +30,6 @@ Item {
     property bool powerMenuOpen: false
     property bool powerModeOpen: false
     property bool keyboardOpen: false
-    property int pendingBrightness: -1
     property int pendingKbdBrightness: -1
 
     readonly property var cfg: Plasmoid.configuration
@@ -49,14 +48,15 @@ Item {
 
     // ---- Befehle ----
     readonly property string qUP: "qdbus6 --system org.freedesktop.UPower /org/freedesktop/UPower/devices/DisplayDevice org.freedesktop.UPower.Device."
-    readonly property string qBright: "qdbus6 org.kde.ScreenBrightness /org/kde/ScreenBrightness/display0 org.kde.ScreenBrightness.Display."
+    readonly property string qBrightRoot: "qdbus6 org.kde.ScreenBrightness /org/kde/ScreenBrightness"
     readonly property string qKbd: "qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/KeyboardBrightnessControl org.kde.Solid.PowerManagement.Actions.KeyboardBrightnessControl."
     readonly property string qProfile: "qdbus6 --system org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles.ActiveProfile"
     readonly property string qNight: "qdbus6 org.kde.KWin.NightLight /org/kde/KWin/NightLight org.kde.KWin.NightLight.enabled"
 
     readonly property string refreshCmd:
         "echo \"KPWR;BAT|$(" + qUP + "Percentage 2>/dev/null)|$(" + qUP + "State 2>/dev/null)|$(" + qUP + "IconName 2>/dev/null)\";" +
-        "echo \"KPWR;BRIGHT|$(" + qBright + "Brightness 2>/dev/null)|$(" + qBright + "MaxBrightness 2>/dev/null)\";" +
+        "for d in $(" + qBrightRoot + " org.kde.ScreenBrightness.DisplaysDBusNames 2>/dev/null); do " +
+        "echo \"KPWR;DISP|$d|$(" + qBrightRoot + "/$d org.kde.ScreenBrightness.Display.Brightness 2>/dev/null)|$(" + qBrightRoot + "/$d org.kde.ScreenBrightness.Display.MaxBrightness 2>/dev/null)|$(" + qBrightRoot + "/$d org.kde.ScreenBrightness.Display.Label 2>/dev/null)\"; done;" +
         "echo \"KPWR;WIFI|$(LC_ALL=C nmcli radio wifi 2>/dev/null)|$(LC_ALL=C nmcli -t -f active,ssid dev wifi 2>/dev/null | grep '^yes:' | head -n1 | cut -d: -f2-)\";" +
         "echo \"KPWR;BT|$(LC_ALL=C bluetoothctl show 2>/dev/null | grep -m1 'Powered:' | awk '{print $2}')\";" +
         "echo \"KPWR;PROFILE|$(" + qProfile + " 2>/dev/null)\";" +
@@ -102,6 +102,8 @@ Item {
 
     function parseState(out) {
         const lines = out.split("\n")
+        const dispIds = []
+        const dispInfo = {}
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i]
             if (line.indexOf("KPWR;") !== 0) {
@@ -116,9 +118,13 @@ Item {
                     batteryIcon = parts[3]
                 }
                 break
-            case "BRIGHT":
-                brightness = parts[1] ? parseInt(parts[1]) : -1
-                brightnessMax = parts[2] ? parseInt(parts[2]) : -1
+            case "DISP":
+                dispIds.push(parts[1])
+                dispInfo[parts[1]] = {
+                    brightness: parts[2] ? parseInt(parts[2]) : -1,
+                    max: parts[3] ? parseInt(parts[3]) : -1,
+                    label: parts.slice(4).join("|")
+                }
                 break
             case "WIFI":
                 wifiOn = parts[1] === "enabled"
@@ -146,6 +152,14 @@ Item {
                 airplaneOn = total > 0 && blocked === total
                 break
             }
+        }
+        if (dispIds.length > 0) {
+            // Repeater-Modell nur ersetzen, wenn sich die Display-Liste
+            // wirklich ändert, sonst würde ein laufender Slider-Drag abbrechen
+            if (JSON.stringify(dispIds) !== JSON.stringify(displayIds)) {
+                displayIds = dispIds
+            }
+            displayInfo = dispInfo
         }
     }
 
@@ -199,16 +213,6 @@ Item {
         running: plasmoidItem ? plasmoidItem.expanded : false
         repeat: true
         onTriggered: fullRoot.refresh()
-    }
-
-    Timer {
-        id: brightnessTimer
-        interval: 150
-        onTriggered: {
-            if (fullRoot.pendingBrightness >= 0) {
-                fullRoot.exec(fullRoot.qBright + "SetBrightness " + fullRoot.pendingBrightness + " 1")
-            }
-        }
     }
 
     Timer {
@@ -400,35 +404,81 @@ Item {
             }
         }
 
-        // ================= Helligkeit =================
-        RowLayout {
-            visible: fullRoot.cfg.showBrightness && fullRoot.brightnessMax > 0
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing * 2
+        // ================= Helligkeit (ein Regler pro Bildschirm) =================
+        Repeater {
+            model: fullRoot.displayIds
 
-            Kirigami.Icon {
-                implicitWidth: Kirigami.Units.iconSizes.smallMedium
-                implicitHeight: implicitWidth
-                source: "brightness-high-symbolic"
-                color: Kirigami.Theme.textColor
-            }
+            RowLayout {
+                id: brightnessRow
 
-            PC3.Slider {
-                id: brightnessSlider
+                required property string modelData
+                required property int index
+                readonly property var info: fullRoot.displayInfo[modelData]
+                property int pending: -1
+
+                visible: fullRoot.cfg.showBrightness && info !== undefined && info.max > 0
                 Layout.fillWidth: true
-                from: 0
-                to: fullRoot.brightnessMax > 0 ? fullRoot.brightnessMax : 100
-                stepSize: 1
-                onMoved: {
-                    fullRoot.pendingBrightness = Math.round(value)
-                    brightnessTimer.restart()
+                spacing: Kirigami.Units.smallSpacing * 2
+
+                Kirigami.Icon {
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                    implicitHeight: implicitWidth
+                    source: "brightness-high-symbolic"
+                    color: Kirigami.Theme.textColor
                 }
 
-                Binding on value {
-                    // Hängt bewusst auch von brightnessMax ab, damit die Binding
-                    // neu auswertet, sobald "to" seinen echten Wert bekommt
-                    value: Math.min(fullRoot.brightness, fullRoot.brightnessMax)
-                    when: !brightnessSlider.pressed && fullRoot.brightness >= 0
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+
+                    PC3.Label {
+                        Layout.fillWidth: true
+                        visible: fullRoot.displayIds.length > 1
+                        text: (brightnessRow.index + 1) + " · "
+                              + (brightnessRow.info && brightnessRow.info.label !== ""
+                                 ? brightnessRow.info.label
+                                 : "Bildschirm")
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
+                        elide: Text.ElideRight
+                    }
+
+                    PC3.Slider {
+                        id: dispSlider
+                        Layout.fillWidth: true
+                        from: 0
+                        to: brightnessRow.info && brightnessRow.info.max > 0
+                            ? brightnessRow.info.max : 100
+                        stepSize: 1
+                        onMoved: {
+                            brightnessRow.pending = Math.round(value)
+                            dispTimer.restart()
+                        }
+
+                        Binding on value {
+                            // Hängt bewusst auch vom Maximum ab, damit die Binding
+                            // neu auswertet, sobald "to" seinen echten Wert bekommt
+                            value: brightnessRow.info
+                                   ? Math.min(brightnessRow.info.brightness, brightnessRow.info.max)
+                                   : 0
+                            when: !dispSlider.pressed
+                                  && brightnessRow.info !== undefined
+                                  && brightnessRow.info.brightness >= 0
+                        }
+                    }
+                }
+
+                Timer {
+                    id: dispTimer
+                    interval: 150
+                    onTriggered: {
+                        if (brightnessRow.pending >= 0) {
+                            fullRoot.exec(fullRoot.qBrightRoot + "/" + brightnessRow.modelData
+                                          + " org.kde.ScreenBrightness.Display.SetBrightness "
+                                          + brightnessRow.pending + " 1")
+                        }
+                    }
                 }
             }
         }

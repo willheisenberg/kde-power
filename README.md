@@ -13,7 +13,8 @@ Systemeinstellungen · Bildschirm sperren · Power-Knopf
 **Power-Menü:** Bereitschaft · Neustart… · Ausschalten… · Abmelden… ·
 Benutzer wechseln… (die „…“-Einträge zeigen den Plasma-Bestätigungsdialog)
 
-**Regler:** Bildschirmhelligkeit (org.kde.ScreenBrightness)
+**Regler:** Bildschirmhelligkeit – ein Regler pro erkanntem Bildschirm
+(org.kde.ScreenBrightness), bei mehreren Monitoren mit Namensbeschriftung
 
 **Kacheln:** WLAN (nmcli) · Bluetooth (bluetoothctl) · Energiemodus
 (power-profiles-daemon, Pfeil öffnet Profilauswahl) · Nachtlicht (KWin) ·
@@ -40,5 +41,5 @@ Danach: Rechtsklick aufs Panel → „Miniprogramme hinzufügen…“ →
   Ohne den Dienst ist die Kachel ausgegraut.
 - **Benutzer wechseln** nutzt `org.freedesktop.DisplayManager` (SDDM/LightDM).
 - **Flugmodus** blockiert alle Funkgeräte per `rfkill block all`.
-- Der Helligkeitsregler steuert `display0` (erstes Display von
-  org.kde.ScreenBrightness).
+- Die Helligkeitsregler steuern alle von org.kde.ScreenBrightness
+  gemeldeten Displays einzeln (intern wie extern/DDC).
