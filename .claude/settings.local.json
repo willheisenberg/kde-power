@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(qdbus6 --system org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles.ActiveProfile)",
+      "Bash(qdbus6 org.kde.ScreenBrightness /org/kde/ScreenBrightness/display0)",
+      "Bash(qdbus6 org.kde.ScreenBrightness /org/kde/ScreenBrightness org.kde.ScreenBrightness.DisplaysDBusNames)",
+      "Bash(qdbus6 org.kde.KWin.NightLight /org/kde/KWin/NightLight)"
+    ]
+  }
+}

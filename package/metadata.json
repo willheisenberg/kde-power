@@ -1,0 +1,21 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "danzicchi@gmail.com",
+                "Name": "Tesla"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Power- und Schnelleinstellungs-Menü im GNOME-Stil",
+        "Description[de]": "Power- und Schnelleinstellungs-Menü im GNOME-Stil",
+        "Icon": "system-shutdown-symbolic",
+        "Id": "com.github.tesla.gnomepower",
+        "License": "GPL-3.0+",
+        "Name": "Power-Menü (GNOME-Stil)",
+        "Name[de]": "Power-Menü (GNOME-Stil)",
+        "Version": "1.0"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
