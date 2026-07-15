@@ -19,6 +19,8 @@ Item {
     property bool wifiOn: false
     property string wifiSsid: ""
     property bool btOn: false
+    property int btConnCount: 0
+    property string btConnName: ""
     property string powerProfile: ""        // leer = power-profiles-daemon fehlt
     property bool nightOn: false
     property string colorScheme: ""
@@ -26,10 +28,17 @@ Item {
     property int kbdMax: -1
     property bool airplaneOn: false
 
+    // ---- Ausklapp-Panels (Geräte-/Netzwerklisten) ----
+    property var btDevices: []       // { path, mac, connected, icon, name }
+    property var btAdapters: []      // { path, powered }
+    property var wifiNets: []        // { inUse, ssid, signal, secured }
+
     // ---- UI-Zustand ----
     property bool powerMenuOpen: false
     property bool powerModeOpen: false
     property bool keyboardOpen: false
+    property bool wifiPanelOpen: false
+    property bool btPanelOpen: false
     property int pendingKbdBrightness: -1
     property var lastSetTs: ({})     // display-id -> Zeitpunkt der letzten lokalen Änderung
     property double kbdLastSetTs: 0
@@ -60,12 +69,12 @@ Item {
         "for d in $(" + qBrightRoot + " org.kde.ScreenBrightness.DisplaysDBusNames 2>/dev/null); do " +
         "echo \"KPWR;DISP|$d|$(" + qBrightRoot + "/$d org.kde.ScreenBrightness.Display.Brightness 2>/dev/null)|$(" + qBrightRoot + "/$d org.kde.ScreenBrightness.Display.MaxBrightness 2>/dev/null)|$(" + qBrightRoot + "/$d org.kde.ScreenBrightness.Display.Label 2>/dev/null)\"; done;" +
         "echo \"KPWR;WIFI|$(LC_ALL=C nmcli radio wifi 2>/dev/null)|$(LC_ALL=C nmcli -t -f active,ssid dev wifi 2>/dev/null | grep '^yes:' | head -n1 | cut -d: -f2-)\";" +
-        "echo \"KPWR;BT|$(LC_ALL=C bluetoothctl show 2>/dev/null | grep -m1 'Powered:' | awk '{print $2}')\";" +
         "echo \"KPWR;PROFILE|$(" + qProfile + " 2>/dev/null)\";" +
         "echo \"KPWR;NIGHT|$(" + qNight + " 2>/dev/null)\";" +
         "echo \"KPWR;SCHEME|$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null)\";" +
         "echo \"KPWR;KBD|$(" + qKbd + "keyboardBrightness 2>/dev/null)|$(" + qKbd + "keyboardBrightnessMax 2>/dev/null)\";" +
-        "echo \"KPWR;PLANE|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked: yes')|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked:')\""
+        "echo \"KPWR;PLANE|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked: yes')|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked:')\";" +
+        btListCmd
 
     P5Support.DataSource {
         id: executable
@@ -82,16 +91,71 @@ Item {
         executable.connectSource(cmd)
     }
 
+    // Adapter und Geräte ALLER Bluetooth-Controller über die BlueZ-DBus-API
+    // (bluetoothctl zeigt nur den Standard-Controller und übersieht Geräte,
+    // die an einem zweiten Adapter hängen)
+    readonly property string btListCmd:
+        "echo \"KPWR;BTLIST\";" +
+        "busctl --system call org.bluez / org.freedesktop.DBus.ObjectManager GetManagedObjects --json=short 2>/dev/null" +
+        " | python3 -c 'import json,sys\n" +
+        "try:\n" +
+        " d=json.load(sys.stdin)[\"data\"][0]\n" +
+        "except Exception:\n" +
+        " d={}\n" +
+        "for p,i in sorted(d.items()):\n" +
+        " a=i.get(\"org.bluez.Adapter1\")\n" +
+        " if a:\n" +
+        "  print(\"KPWR;BTADP|%s|%d\"%(p,1 if a.get(\"Powered\",{}).get(\"data\",False) else 0))\n" +
+        " v=i.get(\"org.bluez.Device1\")\n" +
+        " if not v:\n" +
+        "  continue\n" +
+        " c=v.get(\"Connected\",{}).get(\"data\",False)\n" +
+        " ic=(v.get(\"Icon\") or {}).get(\"data\") or \"network-bluetooth\"\n" +
+        " print(\"KPWR;BTDEV|%s|%s|%d|%s|%s\"%(p,v[\"Address\"][\"data\"],1 if c else 0,ic,v.get(\"Alias\",{}).get(\"data\",\"?\")))' 2>/dev/null"
+
+    // Netzwerkliste (nur abgefragt, wenn das WLAN-Panel offen ist)
+    readonly property string wifiListCmd:
+        "echo \"KPWR;WIFILIST\";" +
+        "LC_ALL=C nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY dev wifi list --rescan no 2>/dev/null" +
+        " | sed 's/^/KPWR;WIFINET|/'"
+
+    function refreshPayload() {
+        let c = refreshCmd
+        if (wifiPanelOpen) {
+            c += ";" + wifiListCmd
+        }
+        return c
+    }
+
     // Der Zeitstempel markiert, wann die Abfrage losgeschickt wurde. Antworten,
     // die älter sind als die letzte lokale Regler-Änderung, werden beim Parsen
     // verworfen, damit sie den frischen Wert nicht überschreiben.
     function refresh() {
-        exec("echo \"KPWR;TS|" + Date.now() + "\";" + refreshCmd)
+        exec("echo \"KPWR;TS|" + Date.now() + "\";" + refreshPayload())
     }
 
     // Aktion ausführen, kurz warten, dann Zustand neu einlesen
     function toggleAndRefresh(cmd) {
-        exec("echo \"KPWR;TS|" + Date.now() + "\";" + cmd + " >/dev/null 2>&1; sleep 0.4; " + refreshCmd)
+        exec("echo \"KPWR;TS|" + Date.now() + "\";" + cmd + " >/dev/null 2>&1; sleep 0.4; " + refreshPayload())
+    }
+
+    function shellQuote(s) {
+        return "'" + s.replace(/'/g, "'\\''") + "'"
+    }
+
+    function wifiSignalIcon(s) {
+        if (s >= 80) return "network-wireless-signal-excellent-symbolic"
+        if (s >= 55) return "network-wireless-signal-good-symbolic"
+        if (s >= 30) return "network-wireless-signal-ok-symbolic"
+        if (s > 0) return "network-wireless-signal-weak-symbolic"
+        return "network-wireless-signal-none-symbolic"
+    }
+
+    function closePanels() {
+        powerModeOpen = false
+        keyboardOpen = false
+        wifiPanelOpen = false
+        btPanelOpen = false
     }
 
     function launch(cmd) {
@@ -109,6 +173,11 @@ Item {
         const lines = out.split("\n")
         const dispIds = []
         const dispInfo = {}
+        const btList = []
+        const adpList = []
+        let btSeen = false
+        const wifiRaw = []
+        let wifiSeen = false
         let requestTs = 0
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i]
@@ -139,9 +208,6 @@ Item {
                 wifiOn = parts[1] === "enabled"
                 wifiSsid = parts[2] || ""
                 break
-            case "BT":
-                btOn = parts[1] === "yes"
-                break
             case "PROFILE":
                 powerProfile = parts[1] || ""
                 break
@@ -151,6 +217,44 @@ Item {
             case "SCHEME":
                 colorScheme = parts[1] || ""
                 break
+            case "BTLIST":
+                btSeen = true
+                break
+            case "BTADP":
+                adpList.push({
+                    path: parts[1],
+                    powered: parts[2] === "1"
+                })
+                break
+            case "BTDEV":
+                btList.push({
+                    path: parts[1],
+                    mac: parts[2],
+                    connected: parts[3] === "1",
+                    icon: parts[4] || "network-bluetooth",
+                    name: parts.slice(5).join("|")
+                })
+                break
+            case "WIFILIST":
+                wifiSeen = true
+                break
+            case "WIFINET": {
+                // nmcli -t: IN-USE:SSID:SIGNAL:SECURITY, Doppelpunkte in der
+                // SSID sind als \: maskiert
+                const f = parts.slice(1).join("|").split(":")
+                if (f.length >= 4) {
+                    const ssid = f.slice(1, f.length - 2).join(":").replace(/\\:/g, ":")
+                    if (ssid !== "") {
+                        wifiRaw.push({
+                            inUse: f[0] === "*",
+                            ssid: ssid,
+                            signal: parseInt(f[f.length - 2]) || 0,
+                            secured: f[f.length - 1] !== "" && f[f.length - 1] !== "--"
+                        })
+                    }
+                }
+                break
+            }
             case "KBD":
                 if (requestTs >= kbdLastSetTs) {
                     kbdBrightness = parts[1] ? parseInt(parts[1]) : -1
@@ -180,6 +284,59 @@ Item {
                 }
             }
             displayInfo = dispInfo
+        }
+        if (btSeen) {
+            btAdapters = adpList
+            let anyPowered = false
+            for (let i = 0; i < adpList.length; i++) {
+                if (adpList[i].powered) {
+                    anyPowered = true
+                }
+            }
+            btOn = anyPowered
+            // Verbundene Geräte zuerst
+            btList.sort(function (a, b) {
+                return b.connected - a.connected
+            })
+            let connCount = 0
+            let firstName = ""
+            for (let i = 0; i < btList.length; i++) {
+                if (btList[i].connected) {
+                    connCount++
+                    if (firstName === "") {
+                        firstName = btList[i].name
+                    }
+                }
+            }
+            btConnCount = connCount
+            btConnName = firstName
+            if (JSON.stringify(btList) !== JSON.stringify(btDevices)) {
+                btDevices = btList
+            }
+        }
+        if (wifiSeen) {
+            // Pro SSID nur den besten Eintrag behalten, verbundenes Netz zuerst
+            const bySsid = {}
+            for (let i = 0; i < wifiRaw.length; i++) {
+                const n = wifiRaw[i]
+                const e = bySsid[n.ssid]
+                if (e === undefined || (n.inUse && !e.inUse)
+                        || (n.inUse === e.inUse && n.signal > e.signal)) {
+                    bySsid[n.ssid] = n
+                }
+            }
+            const keys = Object.keys(bySsid)
+            let nets = []
+            for (let i = 0; i < keys.length; i++) {
+                nets.push(bySsid[keys[i]])
+            }
+            nets.sort(function (a, b) {
+                return (b.inUse - a.inUse) || (b.signal - a.signal)
+            })
+            nets = nets.slice(0, 7)
+            if (JSON.stringify(nets) !== JSON.stringify(wifiNets)) {
+                wifiNets = nets
+            }
         }
     }
 
@@ -239,8 +396,7 @@ Item {
                 refresh()
             } else {
                 powerMenuOpen = false
-                powerModeOpen = false
-                keyboardOpen = false
+                fullRoot.closePanels()
             }
         }
     }
@@ -548,19 +704,220 @@ Item {
                 subtitle: fullRoot.wifiOn ? (fullRoot.wifiSsid !== "" ? fullRoot.wifiSsid : "Nicht verbunden") : "Aus"
                 active: fullRoot.wifiOn
                 showArrow: true
+                arrowChecked: fullRoot.wifiPanelOpen
                 onClicked: fullRoot.toggleAndRefresh("nmcli radio wifi " + (fullRoot.wifiOn ? "off" : "on"))
-                onArrowClicked: fullRoot.launch("kcmshell6 kcm_networkmanagement")
+                onArrowClicked: {
+                    const open = !fullRoot.wifiPanelOpen
+                    fullRoot.closePanels()
+                    fullRoot.wifiPanelOpen = open
+                    if (open) {
+                        fullRoot.exec("nmcli dev wifi rescan >/dev/null 2>&1")
+                        fullRoot.refresh()
+                    }
+                }
             }
 
             QuickToggle {
                 visible: fullRoot.cfg.showBluetooth
                 icon: "network-bluetooth-symbolic"
                 title: "Bluetooth"
-                subtitle: fullRoot.btOn ? "An" : "Aus"
+                subtitle: !fullRoot.btOn ? "Aus"
+                          : fullRoot.btConnCount > 1 ? fullRoot.btConnCount + " Geräte verbunden"
+                          : fullRoot.btConnName !== "" ? fullRoot.btConnName
+                          : "An"
                 active: fullRoot.btOn
                 showArrow: true
-                onClicked: fullRoot.toggleAndRefresh("bluetoothctl power " + (fullRoot.btOn ? "off" : "on"))
-                onArrowClicked: fullRoot.launch("kcmshell6 kcm_bluetooth")
+                arrowChecked: fullRoot.btPanelOpen
+                onClicked: {
+                    // Alle Adapter schalten, nicht nur den Standard-Controller
+                    const cmds = []
+                    for (let i = 0; i < fullRoot.btAdapters.length; i++) {
+                        cmds.push("busctl --system set-property org.bluez "
+                                  + fullRoot.btAdapters[i].path
+                                  + " org.bluez.Adapter1 Powered b "
+                                  + (fullRoot.btOn ? "false" : "true"))
+                    }
+                    fullRoot.toggleAndRefresh(cmds.length > 0
+                        ? cmds.join("; ")
+                        : "bluetoothctl power " + (fullRoot.btOn ? "off" : "on"))
+                }
+                onArrowClicked: {
+                    const open = !fullRoot.btPanelOpen
+                    fullRoot.closePanels()
+                    fullRoot.btPanelOpen = open
+                    if (open) {
+                        fullRoot.refresh()
+                    }
+                }
+            }
+
+            // ---- WLAN-Panel (klappt unter der Kachelzeile aus) ----
+            ExpandingCard {
+                Layout.columnSpan: 2
+                open: fullRoot.wifiPanelOpen && fullRoot.cfg.showWifi
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: Kirigami.Units.smallSpacing
+                    spacing: Kirigami.Units.smallSpacing * 2
+
+                    Rectangle {
+                        implicitWidth: Kirigami.Units.gridUnit * 2
+                        implicitHeight: implicitWidth
+                        radius: width / 2
+                        color: fullRoot.wifiOn
+                               ? Kirigami.Theme.highlightColor
+                               : Qt.rgba(Kirigami.Theme.textColor.r,
+                                         Kirigami.Theme.textColor.g,
+                                         Kirigami.Theme.textColor.b, 0.15)
+
+                        Kirigami.Icon {
+                            anchors.centerIn: parent
+                            width: Kirigami.Units.iconSizes.smallMedium
+                            height: width
+                            source: "network-wireless-symbolic"
+                            color: fullRoot.wifiOn
+                                   ? Kirigami.Theme.highlightedTextColor
+                                   : Kirigami.Theme.textColor
+                        }
+                    }
+
+                    PC3.Label {
+                        text: "WLAN"
+                        font.weight: Font.Bold
+                        font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.1
+                    }
+                }
+
+                PC3.Label {
+                    visible: fullRoot.wifiNets.length === 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.largeSpacing
+                    text: fullRoot.wifiOn ? "Suche Netzwerke…" : "WLAN ist ausgeschaltet"
+                    opacity: 0.7
+                }
+
+                Repeater {
+                    model: fullRoot.wifiNets
+
+                    PanelItem {
+                        required property var modelData
+                        icon: fullRoot.wifiSignalIcon(modelData.signal)
+                        fallbackIcon: "network-wireless-symbolic"
+                        text: modelData.ssid
+                        trailing: modelData.inUse ? "Verbunden" : ""
+                        bold: modelData.inUse
+                        onClicked: {
+                            if (!modelData.inUse) {
+                                fullRoot.toggleAndRefresh("nmcli dev wifi connect "
+                                                          + fullRoot.shellQuote(modelData.ssid))
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                    Layout.bottomMargin: Kirigami.Units.smallSpacing
+                    implicitHeight: 1
+                    color: Qt.rgba(Kirigami.Theme.textColor.r,
+                                   Kirigami.Theme.textColor.g,
+                                   Kirigami.Theme.textColor.b, 0.15)
+                }
+
+                PanelItem {
+                    text: "WLAN-Einstellungen"
+                    onClicked: fullRoot.launch("kcmshell6 kcm_networkmanagement")
+                }
+            }
+
+            // ---- Bluetooth-Panel (klappt unter der Kachelzeile aus) ----
+            ExpandingCard {
+                Layout.columnSpan: 2
+                open: fullRoot.btPanelOpen && fullRoot.cfg.showBluetooth
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: Kirigami.Units.smallSpacing
+                    spacing: Kirigami.Units.smallSpacing * 2
+
+                    Rectangle {
+                        implicitWidth: Kirigami.Units.gridUnit * 2
+                        implicitHeight: implicitWidth
+                        radius: width / 2
+                        color: fullRoot.btOn
+                               ? Kirigami.Theme.highlightColor
+                               : Qt.rgba(Kirigami.Theme.textColor.r,
+                                         Kirigami.Theme.textColor.g,
+                                         Kirigami.Theme.textColor.b, 0.15)
+
+                        Kirigami.Icon {
+                            anchors.centerIn: parent
+                            width: Kirigami.Units.iconSizes.smallMedium
+                            height: width
+                            source: "network-bluetooth-symbolic"
+                            color: fullRoot.btOn
+                                   ? Kirigami.Theme.highlightedTextColor
+                                   : Kirigami.Theme.textColor
+                        }
+                    }
+
+                    PC3.Label {
+                        text: "Bluetooth"
+                        font.weight: Font.Bold
+                        font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.1
+                    }
+                }
+
+                PC3.Label {
+                    visible: fullRoot.btDevices.length === 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.largeSpacing
+                    text: fullRoot.btOn ? "Keine gekoppelten Geräte" : "Bluetooth ist ausgeschaltet"
+                    opacity: 0.7
+                }
+
+                Repeater {
+                    model: fullRoot.btDevices
+
+                    PanelItem {
+                        required property var modelData
+                        icon: modelData.icon
+                        fallbackIcon: "network-bluetooth"
+                        text: modelData.name
+                        trailing: modelData.connected ? "Trennen" : "Verbinden"
+                        bold: modelData.connected
+                        onClicked: {
+                            // Über den DBus-Pfad, damit auch Geräte an einem
+                            // zweiten Adapter funktionieren. Falls noch nicht
+                            // gekoppelt: erst vertrauen + koppeln.
+                            const dev = "busctl --system call org.bluez "
+                                        + modelData.path + " org.bluez.Device1 "
+                            const cmd = modelData.connected
+                                ? dev + "Disconnect"
+                                : dev + "Connect || { busctl --system set-property org.bluez "
+                                  + modelData.path + " org.bluez.Device1 Trusted b true; "
+                                  + dev + "Pair; " + dev + "Connect; }"
+                            fullRoot.toggleAndRefresh(cmd)
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                    Layout.bottomMargin: Kirigami.Units.smallSpacing
+                    implicitHeight: 1
+                    color: Qt.rgba(Kirigami.Theme.textColor.r,
+                                   Kirigami.Theme.textColor.g,
+                                   Kirigami.Theme.textColor.b, 0.15)
+                }
+
+                PanelItem {
+                    text: "Bluetooth-Einstellungen"
+                    onClicked: fullRoot.launch("kcmshell6 kcm_bluetooth")
+                }
             }
 
             QuickToggle {
@@ -574,8 +931,9 @@ Item {
                 arrowChecked: fullRoot.powerModeOpen
                 onClicked: fullRoot.cycleProfile()
                 onArrowClicked: {
-                    fullRoot.powerModeOpen = !fullRoot.powerModeOpen
-                    fullRoot.keyboardOpen = false
+                    const open = !fullRoot.powerModeOpen
+                    fullRoot.closePanels()
+                    fullRoot.powerModeOpen = open
                 }
             }
 
@@ -589,6 +947,23 @@ Item {
                     "kwriteconfig6 --file kwinrc --group NightColor --key Active "
                     + (fullRoot.nightOn ? "false" : "true")
                     + " && qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure")
+            }
+
+            // ---- Energiemodus-Auswahl (klappt unter der Kachelzeile aus) ----
+            ExpandingCard {
+                Layout.columnSpan: 2
+                open: fullRoot.powerModeOpen && fullRoot.powerProfile !== ""
+
+                Repeater {
+                    model: ["power-saver", "balanced", "performance"]
+
+                    PowerMenuItem {
+                        required property string modelData
+                        text: (fullRoot.powerProfile === modelData ? "●  " : "○  ")
+                              + fullRoot.profileLabel(modelData)
+                        onClicked: fullRoot.setProfile(modelData)
+                    }
+                }
             }
 
             QuickToggle {
@@ -617,8 +992,61 @@ Item {
                     fullRoot.qKbd + "setKeyboardBrightnessSilent "
                     + (fullRoot.kbdBrightness > 0 ? 0 : fullRoot.kbdMax))
                 onArrowClicked: {
-                    fullRoot.keyboardOpen = !fullRoot.keyboardOpen
-                    fullRoot.powerModeOpen = false
+                    const open = !fullRoot.keyboardOpen
+                    fullRoot.closePanels()
+                    fullRoot.keyboardOpen = open
+                }
+            }
+
+            // ---- Tastaturbeleuchtungs-Regler (klappt unter der Kachelzeile aus) ----
+            ExpandingCard {
+                Layout.columnSpan: 2
+                open: fullRoot.keyboardOpen && fullRoot.kbdMax > 0
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing * 2
+
+                    Kirigami.Icon {
+                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        implicitHeight: implicitWidth
+                        source: "input-keyboard-symbolic"
+                        color: Kirigami.Theme.textColor
+                    }
+
+                    PC3.Slider {
+                        id: kbdSlider
+                        Layout.fillWidth: true
+                        from: 0
+                        to: fullRoot.kbdMax > 0 ? fullRoot.kbdMax : 1
+                        stepSize: 1
+                        snapMode: PC3.Slider.SnapAlways
+
+                        function sync() {
+                            if (!pressed && fullRoot.kbdBrightness >= 0 && fullRoot.kbdMax > 0) {
+                                value = Math.min(fullRoot.kbdBrightness, fullRoot.kbdMax)
+                            }
+                        }
+
+                        Component.onCompleted: sync()
+                        onToChanged: sync()
+                        onMoved: {
+                            fullRoot.pendingKbdBrightness = Math.round(value)
+                            kbdTimer.restart()
+                        }
+                        onPressedChanged: {
+                            if (!pressed && fullRoot.pendingKbdBrightness >= 0) {
+                                kbdTimer.stop()
+                                fullRoot.setKbdBrightness(fullRoot.pendingKbdBrightness)
+                            }
+                            sync()
+                        }
+
+                        Connections {
+                            target: fullRoot
+                            function onKbdBrightnessChanged() { kbdSlider.sync() }
+                        }
+                    }
                 }
             }
 
@@ -633,82 +1061,6 @@ Item {
             }
         }
 
-        // ================= Energiemodus-Auswahl =================
-        Rectangle {
-            visible: fullRoot.powerModeOpen && fullRoot.powerProfile !== ""
-            Layout.fillWidth: true
-            implicitHeight: profileColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
-            radius: Kirigami.Units.largeSpacing
-            color: Qt.rgba(Kirigami.Theme.textColor.r,
-                           Kirigami.Theme.textColor.g,
-                           Kirigami.Theme.textColor.b, 0.06)
-
-            ColumnLayout {
-                id: profileColumn
-                anchors.fill: parent
-                anchors.margins: Kirigami.Units.largeSpacing
-                spacing: Kirigami.Units.smallSpacing
-
-                Repeater {
-                    model: ["power-saver", "balanced", "performance"]
-
-                    PowerMenuItem {
-                        required property string modelData
-                        text: (fullRoot.powerProfile === modelData ? "●  " : "○  ")
-                              + fullRoot.profileLabel(modelData)
-                        onClicked: fullRoot.setProfile(modelData)
-                    }
-                }
-            }
-        }
-
-        // ================= Tastaturbeleuchtungs-Regler =================
-        RowLayout {
-            visible: fullRoot.keyboardOpen && fullRoot.kbdMax > 0
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing * 2
-
-            Kirigami.Icon {
-                implicitWidth: Kirigami.Units.iconSizes.smallMedium
-                implicitHeight: implicitWidth
-                source: "input-keyboard-symbolic"
-                color: Kirigami.Theme.textColor
-            }
-
-            PC3.Slider {
-                id: kbdSlider
-                Layout.fillWidth: true
-                from: 0
-                to: fullRoot.kbdMax > 0 ? fullRoot.kbdMax : 1
-                stepSize: 1
-                snapMode: PC3.Slider.SnapAlways
-
-                function sync() {
-                    if (!pressed && fullRoot.kbdBrightness >= 0 && fullRoot.kbdMax > 0) {
-                        value = Math.min(fullRoot.kbdBrightness, fullRoot.kbdMax)
-                    }
-                }
-
-                Component.onCompleted: sync()
-                onToChanged: sync()
-                onMoved: {
-                    fullRoot.pendingKbdBrightness = Math.round(value)
-                    kbdTimer.restart()
-                }
-                onPressedChanged: {
-                    if (!pressed && fullRoot.pendingKbdBrightness >= 0) {
-                        kbdTimer.stop()
-                        fullRoot.setKbdBrightness(fullRoot.pendingKbdBrightness)
-                    }
-                    sync()
-                }
-
-                Connections {
-                    target: fullRoot
-                    function onKbdBrightnessChanged() { kbdSlider.sync() }
-                }
-            }
-        }
 
         // Schluckt überschüssige Höhe, falls das Widget größer gezogen wird
         Item { Layout.fillHeight: true }

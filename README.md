@@ -16,10 +16,19 @@ Benutzer wechseln… (die „…“-Einträge zeigen den Plasma-Bestätigungsdia
 **Regler:** Bildschirmhelligkeit – ein Regler pro erkanntem Bildschirm
 (org.kde.ScreenBrightness), bei mehreren Monitoren mit Namensbeschriftung
 
-**Kacheln:** WLAN (nmcli) · Bluetooth (bluetoothctl) · Energiemodus
-(power-profiles-daemon, Pfeil öffnet Profilauswahl) · Nachtlicht (KWin) ·
-Dunkles Design (plasma-apply-colorscheme) · Tastaturbeleuchtung
-(PowerDevil, Pfeil öffnet Regler) · Flugmodus (rfkill)
+**Kacheln:** WLAN (nmcli) · Bluetooth (BlueZ-DBus, alle Adapter) ·
+Energiemodus (power-profiles-daemon) · Nachtlicht (KWin) · Dunkles Design
+(plasma-apply-colorscheme) · Tastaturbeleuchtung (PowerDevil) · Flugmodus
+(rfkill)
+
+**Ausklapp-Panels (Pfeil auf der Kachel, animiert, direkt unter der
+Kachelzeile):**
+- *WLAN:* Netzwerkliste mit Signalstärke, Klick verbindet (bekannte/offene
+  Netze; neue passwortgeschützte Netze über „WLAN-Einstellungen“)
+- *Bluetooth:* alle gekoppelten Geräte adapterübergreifend, Klick
+  verbindet/trennt (koppelt bei Bedarf automatisch); das verbundene Gerät
+  erscheint auch als Untertitel der Kachel
+- *Energiemodus:* Profilauswahl · *Tastatur:* Helligkeitsregler
 
 Jedes Element lässt sich in den Widget-Einstellungen einzeln ein- und
 ausblenden. Die Farbschemata für „Dunkles Design“ sind dort konfigurierbar
@@ -41,5 +50,7 @@ Danach: Rechtsklick aufs Panel → „Miniprogramme hinzufügen…“ →
   Ohne den Dienst ist die Kachel ausgegraut.
 - **Benutzer wechseln** nutzt `org.freedesktop.DisplayManager` (SDDM/LightDM).
 - **Flugmodus** blockiert alle Funkgeräte per `rfkill block all`.
+- **Bluetooth** benötigt `python3` und `busctl` (systemd) für die
+  adapterübergreifende Geräteliste.
 - Die Helligkeitsregler steuern alle von org.kde.ScreenBrightness
   gemeldeten Displays einzeln (intern wie extern/DDC).
