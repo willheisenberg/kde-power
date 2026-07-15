@@ -62,7 +62,9 @@ Item {
     readonly property string qBrightRoot: "qdbus6 org.kde.ScreenBrightness /org/kde/ScreenBrightness"
     readonly property string qKbd: "qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/KeyboardBrightnessControl org.kde.Solid.PowerManagement.Actions.KeyboardBrightnessControl."
     readonly property string qProfile: "qdbus6 --system org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles.ActiveProfile"
-    readonly property string qNight: "qdbus6 org.kde.KWin.NightLight /org/kde/KWin/NightLight org.kde.KWin.NightLight.enabled"
+    // "running" statt "enabled": spiegelt den tatsächlichen Zustand inkl.
+    // Inhibierung wider, die der Umschalt-Shortcut verwendet
+    readonly property string qNight: "qdbus6 org.kde.KWin.NightLight /org/kde/KWin/NightLight org.kde.KWin.NightLight.running"
 
     readonly property string refreshCmd:
         "echo \"KPWR;BAT|$(" + qUP + "Percentage 2>/dev/null)|$(" + qUP + "State 2>/dev/null)|$(" + qUP + "IconName 2>/dev/null)\";" +
@@ -943,10 +945,11 @@ Item {
                 title: "Nachtlicht"
                 subtitle: fullRoot.nightOn ? "An" : "Aus"
                 active: fullRoot.nightOn
+                // Offizieller Umschaltweg: derselbe wie die Tastenkombination.
+                // kwinrc-Schreibzugriffe wendet KWin nicht zuverlässig an.
                 onClicked: fullRoot.toggleAndRefresh(
-                    "kwriteconfig6 --file kwinrc --group NightColor --key Active "
-                    + (fullRoot.nightOn ? "false" : "true")
-                    + " && qdbus6 org.kde.KWin /KWin org.kde.KWin.reconfigure")
+                    "qdbus6 org.kde.kglobalaccel /component/kwin"
+                    + " org.kde.kglobalaccel.Component.invokeShortcut \"Toggle Night Color\"")
             }
 
             // ---- Energiemodus-Auswahl (klappt unter der Kachelzeile aus) ----
