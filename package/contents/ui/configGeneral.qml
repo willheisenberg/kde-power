@@ -22,6 +22,7 @@ KCM.SimpleKCM {
     property alias cfg_showSwitchUser: showSwitchUser.checked
 
     // Regler
+    property alias cfg_showVolume: showVolume.checked
     property alias cfg_showBrightness: showBrightness.checked
 
     // Schnelleinstellungen
@@ -67,6 +68,7 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: "Regler"
             Kirigami.FormData.isSection: true
         }
+        QQC2.CheckBox { id: showVolume; text: "Lautstärke" }
         QQC2.CheckBox { id: showBrightness; text: "Bildschirmhelligkeit" }
 
         Item {

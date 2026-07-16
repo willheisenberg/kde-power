@@ -21,6 +21,7 @@
         <entry name="showSwitchUser" type="Bool"><default>true</default></entry>
 
         <!-- Regler -->
+        <entry name="showVolume" type="Bool"><default>true</default></entry>
         <entry name="showBrightness" type="Bool"><default>true</default></entry>
 
         <!-- Schnelleinstellungen -->

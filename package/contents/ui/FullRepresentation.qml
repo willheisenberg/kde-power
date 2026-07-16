@@ -27,6 +27,9 @@ Item {
     property int kbdBrightness: -1
     property int kbdMax: -1
     property bool airplaneOn: false
+    property int volume: -1          // 0..100
+    property bool volMuted: false
+    property double volLastSetTs: 0
     property bool dndOn: false
     property bool micMuted: false
     property bool recOn: false
@@ -82,6 +85,7 @@ Item {
         "echo \"KPWR;PLANE|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked: yes')|$(LC_ALL=C rfkill list 2>/dev/null | grep -c 'Soft blocked:')\";" +
         "echo \"KPWR;DND|$(kreadconfig6 --file plasmanotifyrc --group DoNotDisturb --key Until 2>/dev/null)\";" +
         "echo \"KPWR;MIC|$(LC_ALL=C wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | grep -c MUTED)\";" +
+        "echo \"KPWR;VOL|$(LC_ALL=C wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)\";" +
         btListCmd
 
     P5Support.DataSource {
@@ -285,6 +289,16 @@ Item {
             case "MIC":
                 micMuted = parts[1] ? parseInt(parts[1]) > 0 : false
                 break
+            case "VOL": {
+                // "Volume: 0.38" bzw. "Volume: 0.38 [MUTED]"
+                const raw = parts.slice(1).join("|")
+                const m = raw.match(/([0-9.]+)/)
+                if (m && requestTs >= volLastSetTs) {
+                    volume = Math.round(parseFloat(m[1]) * 100)
+                }
+                volMuted = raw.indexOf("MUTED") !== -1
+                break
+            }
             case "PLANE":
                 const blocked = parts[1] ? parseInt(parts[1]) : 0
                 const total = parts[2] ? parseInt(parts[2]) : 0
@@ -375,6 +389,24 @@ Item {
         }
     }
 
+    function setVolume(value) {
+        exec("wpctl set-volume @DEFAULT_AUDIO_SINK@ " + value + "%")
+        volLastSetTs = Date.now()
+        volume = value
+    }
+
+    function toggleMute() {
+        exec("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle")
+        volMuted = !volMuted
+    }
+
+    function volumeIcon() {
+        if (volMuted || volume <= 0) return "audio-volume-muted-symbolic"
+        if (volume < 34) return "audio-volume-low-symbolic"
+        if (volume < 67) return "audio-volume-medium-symbolic"
+        return "audio-volume-high-symbolic"
+    }
+
     function setKbdBrightness(value) {
         exec(qKbd + "setKeyboardBrightnessSilent " + value)
         kbdLastSetTs = Date.now()
@@ -430,6 +462,17 @@ Item {
         running: plasmoidItem ? plasmoidItem.expanded : false
         repeat: true
         onTriggered: fullRoot.refresh()
+    }
+
+    Timer {
+        id: volTimer
+        interval: 150
+        property int pending: -1
+        onTriggered: {
+            if (pending >= 0) {
+                fullRoot.setVolume(pending)
+            }
+        }
     }
 
     Timer {
@@ -518,125 +561,167 @@ Item {
         }
 
         // ================= Power-Menü =================
-        Rectangle {
-            visible: fullRoot.powerMenuOpen && fullRoot.anyPowerAction
-            Layout.fillWidth: true
-            implicitHeight: powerMenuColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
-            radius: Kirigami.Units.largeSpacing
-            color: Qt.rgba(Kirigami.Theme.textColor.r,
-                           Kirigami.Theme.textColor.g,
-                           Kirigami.Theme.textColor.b, 0.06)
+        ExpandingCard {
+            open: fullRoot.powerMenuOpen && fullRoot.anyPowerAction
 
-            ColumnLayout {
-                id: powerMenuColumn
-                anchors.fill: parent
-                anchors.margins: Kirigami.Units.largeSpacing
-                spacing: Kirigami.Units.smallSpacing
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: Kirigami.Units.smallSpacing
-                    spacing: Kirigami.Units.smallSpacing * 2
-
-                    Rectangle {
-                        implicitWidth: Kirigami.Units.gridUnit * 2
-                        implicitHeight: implicitWidth
-                        radius: width / 2
-                        color: Qt.rgba(Kirigami.Theme.textColor.r,
-                                       Kirigami.Theme.textColor.g,
-                                       Kirigami.Theme.textColor.b, 0.15)
-
-                        Kirigami.Icon {
-                            anchors.centerIn: parent
-                            width: Kirigami.Units.iconSizes.smallMedium
-                            height: width
-                            source: "system-shutdown-symbolic"
-                            color: Kirigami.Theme.textColor
-                        }
-                    }
-
-                    PC3.Label {
-                        text: "Ausschalten"
-                        font.weight: Font.Bold
-                        font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.1
-                    }
-                }
-
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showSuspend
-                    text: "Bereitschaft"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendToRam")
-                    }
-                }
-
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showHibernate
-                    text: "Ruhezustand"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendToDisk")
-                    }
-                }
-
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showHybridSuspend
-                    text: "Hybrider Standby"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendHybrid")
-                    }
-                }
-
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showRestart
-                    text: "Neustart…"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.kde.LogoutPrompt /LogoutPrompt org.kde.LogoutPrompt.promptReboot")
-                    }
-                }
-
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showShutdown
-                    text: "Ausschalten…"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.kde.LogoutPrompt /LogoutPrompt org.kde.LogoutPrompt.promptShutDown")
-                    }
-                }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.bottomMargin: Kirigami.Units.smallSpacing
+                spacing: Kirigami.Units.smallSpacing * 2
 
                 Rectangle {
-                    visible: (fullRoot.cfg.showSuspend || fullRoot.cfg.showHibernate
-                              || fullRoot.cfg.showHybridSuspend || fullRoot.cfg.showRestart
-                              || fullRoot.cfg.showShutdown)
-                             && (fullRoot.cfg.showLogout || fullRoot.cfg.showSwitchUser)
-                    Layout.fillWidth: true
-                    Layout.topMargin: Kirigami.Units.smallSpacing
-                    Layout.bottomMargin: Kirigami.Units.smallSpacing
-                    implicitHeight: 1
+                    implicitWidth: Kirigami.Units.gridUnit * 2
+                    implicitHeight: implicitWidth
+                    radius: width / 2
                     color: Qt.rgba(Kirigami.Theme.textColor.r,
                                    Kirigami.Theme.textColor.g,
                                    Kirigami.Theme.textColor.b, 0.15)
-                }
 
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showLogout
-                    text: "Abmelden…"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.kde.LogoutPrompt /LogoutPrompt org.kde.LogoutPrompt.promptLogout")
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        width: Kirigami.Units.iconSizes.smallMedium
+                        height: width
+                        source: "system-shutdown-symbolic"
+                        color: Kirigami.Theme.textColor
                     }
                 }
 
-                PowerMenuItem {
-                    visible: fullRoot.cfg.showSwitchUser
-                    text: "Benutzer wechseln…"
-                    onClicked: {
-                        fullRoot.closePopup()
-                        fullRoot.exec("qdbus6 org.freedesktop.ScreenSaver /ScreenSaver org.freedesktop.ScreenSaver.Lock; sleep 0.5; qdbus6 --system org.freedesktop.DisplayManager /org/freedesktop/DisplayManager/Seat0 org.freedesktop.DisplayManager.Seat.SwitchToGreeter")
+                PC3.Label {
+                    text: "Ausschalten"
+                    font.weight: Font.Bold
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.1
+                }
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showSuspend
+                text: "Bereitschaft"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendToRam")
+                }
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showHibernate
+                text: "Ruhezustand"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendToDisk")
+                }
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showHybridSuspend
+                text: "Hybrider Standby"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.kde.Solid.PowerManagement /org/kde/Solid/PowerManagement/Actions/SuspendSession org.kde.Solid.PowerManagement.Actions.SuspendSession.suspendHybrid")
+                }
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showRestart
+                text: "Neustart…"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.kde.LogoutPrompt /LogoutPrompt org.kde.LogoutPrompt.promptReboot")
+                }
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showShutdown
+                text: "Ausschalten…"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.kde.LogoutPrompt /LogoutPrompt org.kde.LogoutPrompt.promptShutDown")
+                }
+            }
+
+            Rectangle {
+                visible: (fullRoot.cfg.showSuspend || fullRoot.cfg.showHibernate
+                          || fullRoot.cfg.showHybridSuspend || fullRoot.cfg.showRestart
+                          || fullRoot.cfg.showShutdown)
+                         && (fullRoot.cfg.showLogout || fullRoot.cfg.showSwitchUser)
+                Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                Layout.bottomMargin: Kirigami.Units.smallSpacing
+                implicitHeight: 1
+                color: Qt.rgba(Kirigami.Theme.textColor.r,
+                               Kirigami.Theme.textColor.g,
+                               Kirigami.Theme.textColor.b, 0.15)
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showLogout
+                text: "Abmelden…"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.kde.LogoutPrompt /LogoutPrompt org.kde.LogoutPrompt.promptLogout")
+                }
+            }
+
+            PowerMenuItem {
+                visible: fullRoot.cfg.showSwitchUser
+                text: "Benutzer wechseln…"
+                onClicked: {
+                    fullRoot.closePopup()
+                    fullRoot.exec("qdbus6 org.freedesktop.ScreenSaver /ScreenSaver org.freedesktop.ScreenSaver.Lock; sleep 0.5; qdbus6 --system org.freedesktop.DisplayManager /org/freedesktop/DisplayManager/Seat0 org.freedesktop.DisplayManager.Seat.SwitchToGreeter")
+                }
+            }
+        }
+
+        // ================= Lautstärke =================
+        RowLayout {
+            visible: fullRoot.cfg.showVolume && fullRoot.volume >= 0
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing * 2
+
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignVCenter
+                implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                implicitHeight: implicitWidth
+                source: fullRoot.volumeIcon()
+                color: Kirigami.Theme.textColor
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: fullRoot.toggleMute()
+                }
+            }
+
+            PC3.Slider {
+                id: volSlider
+                Layout.fillWidth: true
+                from: 0
+                to: 100
+                stepSize: 1
+                opacity: fullRoot.volMuted ? 0.5 : 1
+
+                // Wie beim Helligkeitsregler: explizites sync() statt Binding
+                function sync() {
+                    if (!pressed && fullRoot.volume >= 0) {
+                        value = fullRoot.volume
                     }
+                }
+
+                Component.onCompleted: sync()
+                onMoved: {
+                    volTimer.pending = Math.round(value)
+                    volTimer.restart()
+                }
+                onPressedChanged: {
+                    if (!pressed && volTimer.pending >= 0) {
+                        volTimer.stop()
+                        fullRoot.setVolume(volTimer.pending)
+                    }
+                    sync()
+                }
+
+                Connections {
+                    target: fullRoot
+                    function onVolumeChanged() { volSlider.sync() }
                 }
             }
         }

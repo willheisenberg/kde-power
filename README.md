@@ -14,7 +14,8 @@ Systemeinstellungen · Bildschirm sperren · Power-Knopf
 Neustart… · Ausschalten… · Abmelden… · Benutzer wechseln… (die
 „…“-Einträge zeigen den Plasma-Bestätigungsdialog)
 
-**Regler:** Bildschirmhelligkeit – ein Regler pro erkanntem Bildschirm
+**Regler:** Lautstärke (PipeWire/wpctl, Klick aufs Icon schaltet stumm) ·
+Bildschirmhelligkeit – ein Regler pro erkanntem Bildschirm
 (org.kde.ScreenBrightness), bei mehreren Monitoren mit Namensbeschriftung
 
 **Kacheln:** WLAN (nmcli) · Bluetooth (BlueZ-DBus, alle Adapter) ·
